@@ -1,0 +1,10 @@
+[package]
+name = "gfx_1"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu = "25.0.2"
+winit = "0.30.11"
+pollster = "0.3"
+bytemuck = { version = "1.4", features = ["derive"] }
