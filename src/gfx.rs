@@ -1,6 +1,15 @@
 use wgpu::{self, util::DeviceExt};
 use std::sync::Arc;
 use winit::window::Window;
+use std::time::Instant;
+use bytemuck::{Pod, Zeroable};
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct AngleUniform {
+    angle: f32,
+    _pad: [f32; 3],
+}
 
 pub struct State {
     surface: wgpu::Surface<'static>,
@@ -9,6 +18,9 @@ pub struct State {
     config:  wgpu::SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
+    angle_buffer: wgpu::Buffer,
+    angle_bind_group: wgpu::BindGroup,
+    start_time: Instant,
 }
 
 impl State {
@@ -63,31 +75,41 @@ impl State {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        // Shader source
-        let shader_source = r#"
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) color: vec3<f32>,
-}
+        // init angle: 
+        let angle_init = AngleUniform { angle: 0.0, _pad: [0.0; 3] };
 
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec3<f32>,
-}
+        // Create angle buffer
+        let angle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Angle UBO"),
+            contents: bytemuck::bytes_of(&angle_init),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = vec4<f32>(in.position, 0.0, 1.0);
-    out.color = in.color;
-    return out;
-}
+        let angle_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Angle BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<AngleUniform>() as u64),
+                },
+                count: None,
+            }]
+        });
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
-}
-"#;
+        let angle_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Angle BG"),
+            layout: &angle_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: angle_buffer.as_entire_binding()
+            }]
+        });
+
+        // Load WGSL shader from external file
+        let shader_source = include_str!("shader.wgsl");
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
@@ -97,7 +119,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Render pipeline
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&angle_bgl],
             push_constant_ranges: &[],
         });
 
@@ -156,7 +178,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             cache: None,
         });
 
-        Self { surface, device, queue, config, render_pipeline, vertex_buffer }
+        Self { surface, device, queue, config, render_pipeline, vertex_buffer, angle_buffer, angle_bind_group: angle_bg, start_time: Instant::now() }
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -168,6 +190,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 label: Some("render encoder")
             }
         );
+
+        // ---- update angle uniform ----
+        let t = self.start_time.elapsed().as_secs_f32();
+        let current = AngleUniform { angle: t, _pad: [0.0; 3] };
+        self.queue.write_buffer(&self.angle_buffer, 0, bytemuck::bytes_of(&current));
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -191,6 +218,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.angle_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.draw(0..6, 0..1);
         }

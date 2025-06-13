@@ -23,7 +23,7 @@ impl ApplicationHandler for App {
         window_arc.request_redraw();
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -31,6 +31,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(state) = &mut self.state {
                     state.render().unwrap();
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
                 }
             }
             _ => (),
